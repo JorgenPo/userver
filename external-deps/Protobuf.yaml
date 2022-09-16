@@ -11,6 +11,7 @@ debian-names:
 formula-name: protobuf
 pacman-names:
   - protobuf
+  - protobufd
 
 libraries:
     find:

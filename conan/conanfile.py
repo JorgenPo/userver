@@ -1,7 +1,8 @@
 from conans import ConanFile, CMake, tools
 import os
 
-required_conan_version = ">=1.47.0"
+# 1.51.3 fixes bug in cmake_paths generator
+required_conan_version = ">=1.51.3"
 
 class UserverConan(ConanFile):
     name = "userver"
@@ -11,12 +12,13 @@ class UserverConan(ConanFile):
     url = "https://github.com/userver-framework/userver"
     homepage = "https://userver.tech/"
     license = "Apache-2.0"
-    generators = "cmake_find_package"
+    generators = "cmake_paths", "cmake_find_package"
 
     settings = "os", "arch", "compiler", "build_type"
     options = {
         "shared": [True, False], "fPIC": [True, False], 
         "with_jemalloc": [True, False],
+        "with_backtrace": [True, False],
         "with_mongodb": [True, False],
         "with_postgresql": [True, False],
         "with_redis": [True, False],
@@ -31,7 +33,8 @@ class UserverConan(ConanFile):
     default_options = {
         "shared": False, "fPIC": True, 
         "with_jemalloc": True,
-        "with_mongodb": False, 
+        "with_backtrace": True,
+        "with_mongodb": False,
         "with_postgresql": False,
         "with_redis": False,
         "with_grpc": False, 
@@ -59,6 +62,9 @@ class UserverConan(ConanFile):
         if not self.options.namespace_end:
             self.options.namespace_end = "}"
 
+        # Userver generated Findspdlog.cmake script requires library
+        self.options["spdlog"].header_only = False
+
     def requirements(self):
         self.requires("boost/1.79.0")
         self.requires("libev/4.33")
@@ -74,12 +80,15 @@ class UserverConan(ConanFile):
 
         if self.options.with_jemalloc:
             self.requires("jemalloc/5.2.1")
+        if self.options.with_backtrace:
+            self.requires("libbacktrace/cci.20210118")
         if self.options.with_grpc:
             self.requires("grpc/1.48.0")
 
     def _configure_cmake(self):
         cmake = CMake(self)
         cmake.definitions["CMAKE_FIND_DEBUG_MODE"] = "OFF"
+        cmake.definitions["CMAKE_TOOLCHAIN_FILE"] = "conan_paths.cmake"
 
         cmake.definitions["USERVER_OPEN_SOURCE_BUILD"] = "ON"
         cmake.definitions["USERVER_IS_THE_ROOT_PROJECT"] = "OFF"
@@ -87,6 +96,10 @@ class UserverConan(ConanFile):
         cmake.definitions["USERVER_NAMESPACE"] = self.options.namespace
         cmake.definitions["USERVER_NAMESPACE_BEGIN"] = self.options.namespace_begin
         cmake.definitions["USERVER_NAMESPACE_END"] = self.options.namespace_end
+        cmake.definitions["USERVER_FEATURE_STACKTRACE"] = "OFF"
+
+        # Userver uses distro package manager to check versions
+        cmake.definitions["USERVER_CHECK_PACKAGE_VERSIONS"] = "OFF"
 
         if not self.options.with_jemalloc:
             cmake.definitions["USERVER_FEATURE_JEMALLOC"] = "OFF"
@@ -108,35 +121,35 @@ class UserverConan(ConanFile):
 
     def build(self):
         # Rename some packages for cmake to find them in find_package
-        os.rename("Findlibev.cmake", "FindLibEv.cmake")
-        os.rename("Findcryptopp.cmake", "FindCryptoPP.cmake")
-        os.rename("Findyaml-cpp.cmake", "Findlibyamlcpp.cmake")
-        os.rename("Findhttp_parser.cmake", "FindHttp_Parser.cmake")
-        
-        if self.options.with_jemalloc:
-            os.rename("Findjemalloc.cmake", "FindJemalloc.cmake")
-            tools.replace_in_file("FindJemalloc.cmake", "jemalloc::jemalloc", "Jemalloc")
+        #os.rename("Findlibev.cmake", "FindLibEv.cmake")
+        # os.rename("Findcryptopp.cmake", "FindCryptoPP.cmake")
+        # os.rename("Findyaml-cpp.cmake", "Findlibyamlcpp.cmake")
+        # os.rename("Findhttp_parser.cmake", "FindHttp_Parser.cmake")
+        #
+        # if self.options.with_jemalloc:
+        #     os.rename("Findjemalloc.cmake", "FindJemalloc.cmake")
+        #     tools.replace_in_file("FindJemalloc.cmake", "jemalloc::jemalloc", "Jemalloc")
 
         # The simplest way for grpc to be found correctly is to patch CMakeLists
-        if self.options.with_grpc:
-            tools.replace_in_file("grpc/CMakeLists.txt", "find_package(UserverGrpc REQUIRED)", "find_package(gRPC REQUIRED)")
-            tools.replace_in_file("grpc/CMakeLists.txt", "add_library(Grpc ALIAS UserverGrpc)", "")
-            tools.replace_in_file("grpc/CMakeLists.txt", "find_package(UserverProtobuf REQUIRED)", "find_package(Protobuf REQUIRED)")
-            tools.replace_in_file("grpc/CMakeLists.txt", "add_library(Protobuf ALIAS UserverProtobuf)", "")
-            tools.replace_in_file("FindgRPC.cmake", "gRPC::gRPC", "Grpc")
+        # if self.options.with_grpc:
+        #     tools.replace_in_file("grpc/CMakeLists.txt", "find_package(UserverGrpc REQUIRED)", "find_package(gRPC REQUIRED)")
+        #     tools.replace_in_file("grpc/CMakeLists.txt", "add_library(Grpc ALIAS UserverGrpc)", "")
+        #     tools.replace_in_file("grpc/CMakeLists.txt", "find_package(UserverProtobuf REQUIRED)", "find_package(Protobuf REQUIRED)")
+        #     tools.replace_in_file("grpc/CMakeLists.txt", "add_library(Protobuf ALIAS UserverProtobuf)", "")
+        #     tools.replace_in_file("FindgRPC.cmake", "gRPC::gRPC", "Grpc")
 
         # Tune Find* files to produce correct variables-
-        tools.replace_in_file("FindCryptoPP.cmake", "cryptopp_FOUND", "CryptoPP_FOUND")
-        tools.replace_in_file("FindCryptoPP.cmake", "cryptopp_VERSION", "CryptoPP_VERSION")
-        tools.replace_in_file("FindCryptoPP.cmake", "cryptopp::cryptopp", "CryptoPP")
-        tools.replace_in_file("Findlibyamlcpp.cmake", "yaml-cpp_FOUND", "libyamlcpp_FOUND")
-        tools.replace_in_file("Findlibyamlcpp.cmake", "yaml-cpp_VERSION", "libyamlcpp_VERSION")
-        tools.replace_in_file("Findlibyamlcpp.cmake", "yaml-cpp::yaml-cpp", "libyamlcpp")
-        tools.replace_in_file("Findcctz.cmake", "cctz::cctz", "cctz")
-        tools.replace_in_file("Findc-ares.cmake", "c-ares::c-ares", "c-ares")
-        tools.replace_in_file("FindLibEv.cmake", "libev::libev", "LibEv")
-        tools.replace_in_file("FindHttp_Parser.cmake", "http_parser::http_parser", "Http_Parser")
-        tools.replace_in_file("Findfmt.cmake", "add_library(fmt::fmt INTERFACE IMPORTED)", "add_library(fmt::fmt INTERFACE IMPORTED)\nadd_library(fmt ALIAS fmt::fmt)")
+        # tools.replace_in_file("FindCryptoPP.cmake", "cryptopp_FOUND", "CryptoPP_FOUND")
+        # tools.replace_in_file("FindCryptoPP.cmake", "cryptopp_VERSION", "CryptoPP_VERSION")
+        # tools.replace_in_file("FindCryptoPP.cmake", "cryptopp::cryptopp", "CryptoPP")
+        # tools.replace_in_file("Findlibyamlcpp.cmake", "yaml-cpp_FOUND", "libyamlcpp_FOUND")
+        # tools.replace_in_file("Findlibyamlcpp.cmake", "yaml-cpp_VERSION", "libyamlcpp_VERSION")
+        # tools.replace_in_file("Findlibyamlcpp.cmake", "yaml-cpp::yaml-cpp", "libyamlcpp")
+        # tools.replace_in_file("Findcctz.cmake", "cctz::cctz", "cctz")
+        # tools.replace_in_file("Findc-ares.cmake", "c-ares::c-ares", "c-ares")
+        # #tools.replace_in_file("FindLibEv.cmake", "libev::libev", "LibEv")
+        # tools.replace_in_file("FindHttp_Parser.cmake", "http_parser::http_parser", "Http_Parser")
+        # tools.replace_in_file("Findfmt.cmake", "add_library(fmt::fmt INTERFACE IMPORTED)", "add_library(fmt::fmt INTERFACE IMPORTED)\nadd_library(fmt ALIAS fmt::fmt)")
 
         cmake = self._configure_cmake()
         cmake.build()
